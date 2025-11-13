@@ -38,6 +38,7 @@ impl AddonPreparer {
         }
         
         self.create_config_h()?;
+        self.modify_opt_common_c()?;
         self.copy_and_modify_ffmpeg_c()?;
         self.create_binding_c()?;
         
@@ -73,10 +74,14 @@ impl AddonPreparer {
 #define HAVE_GETRUSAGE 0
 
 /* FFmpeg components */
+#define CONFIG_AVUTIL 1
+#define CONFIG_AVCODEC 1
+#define CONFIG_AVFORMAT 1
 #define CONFIG_AVDEVICE 1
 #define CONFIG_AVFILTER 1
 #define CONFIG_SWSCALE 1
 #define CONFIG_SWRESAMPLE 1
+#define CONFIG_POSTPROC 0
 
 /* Architecture */
 #define ARCH_X86_32 0
@@ -88,6 +93,20 @@ impl AddonPreparer {
 
 /* Endianness */
 #define HAVE_BIGENDIAN 0
+
+/* Math functions - MSVC provides these as intrinsics */
+#define HAVE_LRINT 1
+#define HAVE_LRINTF 1
+
+/* FFmpeg data directory - empty for Node.js addon */
+#define FFMPEG_DATADIR ""
+#define AVCONV_DATADIR ""
+
+/* Build configuration */
+#define CONFIG_THIS_YEAR 2025
+#define FFMPEG_CONFIGURATION "Windows build for Node.js addon"
+#define CC_IDENT "MSVC"
+#define FFMPEG_VERSION "N/A"
 
 #endif /* CONFIG_H */
 "#;
@@ -235,7 +254,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     }
     
     if (argc < 1) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -243,7 +262,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     napi_valuetype valuetype;
     status = napi_typeof(env, argv[0], &valuetype);
     if (status != napi_ok || valuetype != napi_object) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -251,7 +270,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     bool is_array;
     status = napi_is_array(env, argv[0], &is_array);
     if (status != napi_ok || !is_array) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -308,7 +327,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
             }
             av_free(str_storage);
             av_free(argv_ptr);
-            napi_throw_type_error(env, "Array element must be a string");
+            napi_throw_type_error(env, NULL, "Array element must be a string");
             return NULL;
         }
         
@@ -418,6 +437,41 @@ finish:
 "#;
         
         Ok(format!("{}{}", content, run_function))
+    }
+    
+    /// Modify opt_common.c to add conditional compilation for postproc
+    fn modify_opt_common_c(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let opt_common_c_path = self.ffmpeg_source_dir.join("fftools").join("opt_common.c");
+        
+        if !opt_common_c_path.exists() {
+            println!("⚠ opt_common.c not found, skipping modification");
+            return Ok(());
+        }
+        
+        let content = fs::read_to_string(&opt_common_c_path)?;
+        
+        // 检查是否已经修改过
+        if content.contains("#if CONFIG_POSTPROC") && content.contains("PRINT_LIB_INFO(postproc") {
+            println!("✓ opt_common.c already modified, skipping");
+            return Ok(());
+        }
+        
+        // 查找 print_all_libs_info 函数中的 postproc 行
+        let pattern = "    PRINT_LIB_INFO(postproc,   POSTPROC,   flags, level);";
+        if let Some(pos) = content.find(pattern) {
+            let before = &content[..pos];
+            let after = &content[pos + pattern.len()..];
+            
+            let modified = format!("{}#if CONFIG_POSTPROC\n    PRINT_LIB_INFO(postproc,   POSTPROC,   flags, level);\n#endif{}", 
+                before, after);
+            
+            fs::write(&opt_common_c_path, modified)?;
+            println!("✓ opt_common.c modified: added CONFIG_POSTPROC conditional compilation");
+        } else {
+            println!("⚠ Could not find postproc line in opt_common.c, skipping modification");
+        }
+        
+        Ok(())
     }
     
     /// Create binding.c
