@@ -104,79 +104,96 @@ impl VcpkgManager {
         Ok(())
     }
     
-    /// Check if package is installed
-    pub fn is_package_installed(&self, package: &str) -> bool {
+    /// Check if ffmpeg is installed with required features (x264, x265, vpx)
+    fn is_ffmpeg_with_features(&self, features: &[&str]) -> bool {
         let output = Command::new(&self.vcpkg_exe)
-            .args(&["list", package])
+            .args(&["list", "ffmpeg"])
             .output();
         
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                return stdout.contains(package) && stdout.contains("x64-windows-static");
+                // Check if ffmpeg is installed and contains all required features
+                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                    return features.iter().all(|feature| stdout.contains(feature));
+                }
             }
         }
         
         false
     }
     
-    /// Install ffmpeg and x264 (static library version)
+    
+    /// Install ffmpeg with codec support for x264, x265, mp4, mov, avi, webm, mkv, m4v formats
+    /// Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9 for WebM)
     pub fn install_packages(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_installed() {
             return Err("vcpkg is not installed, please call install_vcpkg() first".into());
         }
         
-        let x264_installed = self.is_package_installed("x264");
-        let ffmpeg_installed = self.is_package_installed("ffmpeg");
+        // Required features for format support:
+        // - x264: H.264 encoding (mp4, mov, avi, mkv, m4v)
+        // - x265: HEVC encoding (mp4, mov, mkv, m4v)
+        // - vpx: VP8/VP9 encoding (webm)
+        let required_features = vec!["x264", "x265", "vpx"];
         
-        if x264_installed && ffmpeg_installed {
-            println!("✓ x264 static library already installed");
-            println!("✓ ffmpeg static library already installed");
+        // Check if ffmpeg is installed with all required features
+        let ffmpeg_with_features = self.is_ffmpeg_with_features(&required_features);
+        
+        if ffmpeg_with_features {
+            println!("✓ ffmpeg already installed with required codec features");
+            println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
             return Ok(());
         }
         
-        println!("Starting installation of ffmpeg and x264 static libraries...");
-        println!("Note: This may take a long time (10-30 minutes), please wait patiently...");
+        // Check if ffmpeg is installed but without required features
+        let output = Command::new(&self.vcpkg_exe)
+            .args(&["list", "ffmpeg"])
+            .output();
         
-        if x264_installed {
-            println!("✓ x264 static library already installed, skipping installation");
-        } else {
-            println!("Installing x264:x64-windows-static (this may take a few minutes)...");
-            let status = Command::new(&self.vcpkg_exe)
-                .args(&[
-                    "install",
-                    "x264:x64-windows-static",
-                ])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()?;
-            
-            if !status.success() {
-                return Err("x264 installation failed".into());
+        if let Ok(output) = output {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                    println!("⚠ ffmpeg is installed but without required codec features");
+                    println!("Removing ffmpeg to reinstall with full codec support...");
+                    let status = Command::new(&self.vcpkg_exe)
+                        .args(&[
+                            "remove",
+                            "ffmpeg:x64-windows-static",
+                        ])
+                        .stdout(Stdio::inherit())
+                        .stderr(Stdio::inherit())
+                        .status()?;
+                    
+                    if !status.success() {
+                        return Err("Failed to remove existing ffmpeg package".into());
+                    }
+                    println!("✓ Old ffmpeg package removed");
+                }
             }
-            println!("✓ x264 installation completed!");
         }
         
-        if ffmpeg_installed {
-            println!("✓ ffmpeg static library already installed, skipping installation");
-        } else {
-            println!("Installing ffmpeg:x64-windows-static (this may take 10-20 minutes)...");
-            let status = Command::new(&self.vcpkg_exe)
-                .args(&[
-                    "install",
-                    "ffmpeg:x64-windows-static",
-                ])
-                .stdout(Stdio::inherit())
-                .stderr(Stdio::inherit())
-                .status()?;
-            
-            if !status.success() {
-                return Err("ffmpeg installation failed".into());
-            }
-            println!("✓ ffmpeg installation completed!");
+        println!("Installing ffmpeg[x264,x265,vpx]:x64-windows-static...");
+        println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
+        println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)");
+        println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
+        
+        let status = Command::new(&self.vcpkg_exe)
+            .args(&[
+                "install",
+                "ffmpeg[x264,x265,vpx]:x64-windows-static",
+            ])
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        
+        if !status.success() {
+            return Err("ffmpeg installation failed".into());
         }
         
-        println!("✓ All packages installation completed!");
+        println!("✓ ffmpeg installation completed with full codec support!");
+        println!("✓ Format support: x264, x265, mp4, mov, avi, webm, mkv, m4v");
         Ok(())
     }
     

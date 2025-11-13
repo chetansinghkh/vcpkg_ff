@@ -45,6 +45,8 @@
             "swresample.lib",
             "avdevice.lib",
             "libx264.lib",
+            "libx265.lib",
+            "vpx.lib",
             "ws2_32.lib",
             "secur32.lib",
             "bcrypt.lib",
@@ -78,7 +80,9 @@
             "-lswscale",
             "-lswresample",
             "-lavdevice",
-            "-lx264"
+            "-lx264",
+            "-lx265",
+            "-lvpx"
           ]
         }]
       ]
