@@ -14,7 +14,6 @@ pub struct VcpkgManager {
 
 impl VcpkgManager {
     pub fn new() -> Self {
-        // 在运行时，CARGO_MANIFEST_DIR可能不可用，使用当前工作目录
         let vcpkg_root = if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
             PathBuf::from(&manifest_dir).join("vcpkg")
         } else {
@@ -31,49 +30,46 @@ impl VcpkgManager {
         }
     }
     
-    /// 检查vcpkg是否已安装
+    /// Check if vcpkg is installed
     pub fn is_installed(&self) -> bool {
         self.vcpkg_exe.exists()
     }
     
-    /// 检查git是否可用
+    /// Check if git is available
     fn check_git(&self) -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new("git")
             .arg("--version")
             .output()?;
         
         if !output.status.success() {
-            return Err("git未安装或不在PATH中，请先安装git".into());
+            return Err("git is not installed or not in PATH, please install git first".into());
         }
         
         Ok(())
     }
     
-    /// 安装vcpkg
+    /// Install vcpkg
     pub fn install_vcpkg(&self) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_installed() {
-            println!("✓ vcpkg已安装，跳过安装步骤");
+            println!("✓ vcpkg already installed, skipping installation");
             return Ok(());
         }
         
-        println!("检查git...");
+        println!("Checking git...");
         self.check_git()?;
         
-        println!("开始安装vcpkg到: {}", self.vcpkg_root.display());
+        println!("Starting vcpkg installation to: {}", self.vcpkg_root.display());
         
-        // 如果目录已存在但不是vcpkg，先删除
         if self.vcpkg_root.exists() {
-            println!("清理现有目录...");
+            println!("Cleaning existing directory...");
             fs::remove_dir_all(&self.vcpkg_root)?;
         }
         
-        // 创建父目录
         if let Some(parent) = self.vcpkg_root.parent() {
             fs::create_dir_all(parent)?;
         }
         
-        // 克隆vcpkg仓库
-        println!("正在克隆vcpkg仓库（这可能需要几分钟）...");
+        println!("Cloning vcpkg repository (this may take a few minutes)...");
         let status = Command::new("git")
             .args(&[
                 "clone",
@@ -85,11 +81,10 @@ impl VcpkgManager {
             .status()?;
         
         if !status.success() {
-            return Err("git clone vcpkg失败".into());
+            return Err("git clone vcpkg failed".into());
         }
         
-        // 运行bootstrap脚本
-        println!("正在运行bootstrap脚本...");
+        println!("Running bootstrap script...");
         let bootstrap_script = self.vcpkg_root.join("bootstrap-vcpkg.bat");
         let status = Command::new(&bootstrap_script)
             .current_dir(&self.vcpkg_root)
@@ -98,18 +93,18 @@ impl VcpkgManager {
             .status()?;
         
         if !status.success() {
-            return Err("vcpkg bootstrap失败".into());
+            return Err("vcpkg bootstrap failed".into());
         }
         
         if !self.vcpkg_exe.exists() {
-            return Err("vcpkg.exe未生成，bootstrap可能失败".into());
+            return Err("vcpkg.exe was not generated, bootstrap may have failed".into());
         }
         
-        println!("vcpkg安装完成！");
+        println!("vcpkg installation completed!");
         Ok(())
     }
     
-    /// 检查包是否已安装
+    /// Check if package is installed
     pub fn is_package_installed(&self, package: &str) -> bool {
         let output = Command::new(&self.vcpkg_exe)
             .args(&["list", package])
@@ -125,30 +120,28 @@ impl VcpkgManager {
         false
     }
     
-    /// 安装ffmpeg和x264（静态库版本）
+    /// Install ffmpeg and x264 (static library version)
     pub fn install_packages(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.is_installed() {
-            return Err("vcpkg未安装，请先调用install_vcpkg()".into());
+            return Err("vcpkg is not installed, please call install_vcpkg() first".into());
         }
         
         let x264_installed = self.is_package_installed("x264");
         let ffmpeg_installed = self.is_package_installed("ffmpeg");
         
-        // 如果所有包都已安装，直接返回
         if x264_installed && ffmpeg_installed {
-            println!("✓ x264静态库已安装");
-            println!("✓ ffmpeg静态库已安装");
+            println!("✓ x264 static library already installed");
+            println!("✓ ffmpeg static library already installed");
             return Ok(());
         }
         
-        println!("开始安装ffmpeg和x264静态库...");
-        println!("注意：这可能需要较长时间（10-30分钟），请耐心等待...");
+        println!("Starting installation of ffmpeg and x264 static libraries...");
+        println!("Note: This may take a long time (10-30 minutes), please wait patiently...");
         
-        // 安装x264（静态库）
         if x264_installed {
-            println!("✓ x264静态库已安装，跳过安装步骤");
+            println!("✓ x264 static library already installed, skipping installation");
         } else {
-            println!("正在安装x264:x64-windows-static（这可能需要几分钟）...");
+            println!("Installing x264:x64-windows-static (this may take a few minutes)...");
             let status = Command::new(&self.vcpkg_exe)
                 .args(&[
                     "install",
@@ -159,16 +152,15 @@ impl VcpkgManager {
                 .status()?;
             
             if !status.success() {
-                return Err("安装x264失败".into());
+                return Err("x264 installation failed".into());
             }
-            println!("✓ x264安装完成！");
+            println!("✓ x264 installation completed!");
         }
         
-        // 安装ffmpeg（静态库，依赖x264）
         if ffmpeg_installed {
-            println!("✓ ffmpeg静态库已安装，跳过安装步骤");
+            println!("✓ ffmpeg static library already installed, skipping installation");
         } else {
-            println!("正在安装ffmpeg:x64-windows-static（这可能需要10-20分钟）...");
+            println!("Installing ffmpeg:x64-windows-static (this may take 10-20 minutes)...");
             let status = Command::new(&self.vcpkg_exe)
                 .args(&[
                     "install",
@@ -179,26 +171,26 @@ impl VcpkgManager {
                 .status()?;
             
             if !status.success() {
-                return Err("安装ffmpeg失败".into());
+                return Err("ffmpeg installation failed".into());
             }
-            println!("✓ ffmpeg安装完成！");
+            println!("✓ ffmpeg installation completed!");
         }
         
-        println!("✓ 所有包安装完成！");
+        println!("✓ All packages installation completed!");
         Ok(())
     }
     
-    /// 获取vcpkg根目录
+    /// Get vcpkg root directory
     pub fn get_vcpkg_root(&self) -> &Path {
         &self.vcpkg_root
     }
     
-    /// 获取vcpkg可执行文件路径
+    /// Get vcpkg executable path
     pub fn get_vcpkg_exe(&self) -> &Path {
         &self.vcpkg_exe
     }
     
-    /// 检查ffmpeg包是否已解压，返回解压后的文件夹路径
+    /// Check if ffmpeg package is extracted, returns extracted folder path
     pub fn is_ffmpeg_extracted(&self) -> Option<PathBuf> {
         let output_dir = self.get_output_dir();
         let ffmpeg_dir = output_dir.join("ffmpeg");
@@ -210,7 +202,7 @@ impl VcpkgManager {
         None
     }
     
-    /// 获取输出目录（运行目录）
+    /// Get output directory (runtime directory)
     fn get_output_dir(&self) -> PathBuf {
         if let Ok(manifest_dir) = env::var("CARGO_MANIFEST_DIR") {
             PathBuf::from(&manifest_dir)
@@ -220,14 +212,13 @@ impl VcpkgManager {
         }
     }
     
-    /// 查找ffmpeg tar.gz文件
+    /// Find ffmpeg tar.gz file
     fn find_ffmpeg_archive(&self) -> Option<PathBuf> {
         let downloads_dir = self.vcpkg_root.join("downloads");
         if !downloads_dir.exists() {
             return None;
         }
         
-        // 查找ffmpeg相关的tar.gz文件
         if let Ok(entries) = fs::read_dir(&downloads_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -242,41 +233,37 @@ impl VcpkgManager {
         None
     }
     
-    /// 解压ffmpeg包到运行目录
+    /// Extract ffmpeg package to runtime directory
     pub fn extract_ffmpeg(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(extracted_dir) = self.is_ffmpeg_extracted() {
-            println!("✓ ffmpeg项目已导出，跳过解压步骤");
-            println!("  导出目录: {}", extracted_dir.display());
+            println!("✓ ffmpeg project already exported, skipping extraction");
+            println!("  Export directory: {}", extracted_dir.display());
             return Ok(());
         }
         
         let archive_path = match self.find_ffmpeg_archive() {
             Some(path) => path,
             None => {
-                return Err("未找到ffmpeg tar.gz文件，请先安装ffmpeg包".into());
+                return Err("ffmpeg tar.gz file not found, please install ffmpeg package first".into());
             }
         };
         
-        println!("正在解压ffmpeg包: {}", archive_path.display());
+        println!("Extracting ffmpeg package: {}", archive_path.display());
         
         let output_dir = self.get_output_dir();
         
-        // 创建临时目录用于解压
         let temp_dir = output_dir.join(".ffmpeg_temp");
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
         fs::create_dir_all(&temp_dir)?;
         
-        // 打开tar.gz文件
         let file = File::open(&archive_path)?;
         let gz_decoder = GzDecoder::new(BufReader::new(file));
         let mut archive = Archive::new(gz_decoder);
         
-        // 解压到临时目录
         archive.unpack(&temp_dir)?;
         
-        // 查找解压后的顶层目录
         let mut extracted_top_dir = None;
         if let Ok(entries) = temp_dir.read_dir() {
             for entry in entries.flatten() {
@@ -293,27 +280,23 @@ impl VcpkgManager {
             Some(dir) => dir,
             None => {
                 fs::remove_dir_all(&temp_dir)?;
-                return Err("解压后未找到顶层目录".into());
+                return Err("Top-level directory not found after extraction".into());
             }
         };
         
-        // 目标目录路径
         let target_dir = output_dir.join("ffmpeg");
         
-        // 如果目标目录已存在，先删除
         if target_dir.exists() {
             fs::remove_dir_all(&target_dir)?;
         }
         
-        // 重命名/移动目录为ffmpeg
         fs::rename(&extracted_top_dir, &target_dir)?;
         
-        // 清理临时目录
         if temp_dir.exists() {
             fs::remove_dir_all(&temp_dir)?;
         }
         
-        println!("✓ ffmpeg项目已成功导出到: {}", target_dir.display());
+        println!("✓ ffmpeg project successfully exported to: {}", target_dir.display());
         Ok(())
     }
 }

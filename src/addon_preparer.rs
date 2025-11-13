@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[allow(dead_code)]
 pub struct AddonPreparer {
     ffmpeg_source_dir: PathBuf,
     addon_src_dir: PathBuf,
@@ -27,86 +28,134 @@ impl AddonPreparer {
         }
     }
     
-    /// 准备 addon 源码
+    /// Prepare addon source code
     pub fn prepare_addon_source(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("开始准备 Node.js addon 源码...");
+        println!("Preparing Node.js addon source code...");
         
-        // 确保 addon_src 目录存在
         if !self.addon_src_dir.exists() {
             fs::create_dir_all(&self.addon_src_dir)?;
-            println!("✓ 创建 addon_src 目录");
+            println!("✓ Created addon_src directory");
         }
         
-        // 步骤1: 复制并修改 ffmpeg.c
+        self.create_config_h()?;
         self.copy_and_modify_ffmpeg_c()?;
+        self.create_binding_c()?;
         
-        // 步骤2: 创建 binding.gyp
-        self.create_binding_gyp()?;
-        
-        // 步骤3: 创建 binding.cpp
-        self.create_binding_cpp()?;
-        
-        // 步骤4: 创建 package.json（如果需要）
-        self.create_package_json()?;
-        
-        println!("✓ Node.js addon 源码准备完成");
+        println!("✓ Node.js addon source code preparation completed");
         Ok(())
     }
     
-    /// 复制并修改 ffmpeg.c
+    /// Create config.h file (required for ffmpeg compilation)
+    fn create_config_h(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let config_h_path = self.ffmpeg_source_dir.join("config.h");
+        
+        if config_h_path.exists() {
+            println!("✓ config.h already exists, skipping creation");
+            return Ok(());
+        }
+        
+        let config_h_content = r#"/* config.h - Generated for Windows build */
+#ifndef CONFIG_H
+#define CONFIG_H
+
+/* Windows specific defines */
+#define HAVE_IO_H 1
+#define HAVE_UNISTD_H 0
+#define HAVE_SYS_RESOURCE_H 0
+#define HAVE_GETPROCESSTIMES 1
+#define HAVE_GETPROCESSMEMORYINFO 1
+#define HAVE_SETCONSOLECTRLHANDLER 1
+#define HAVE_SYS_SELECT_H 0
+#define HAVE_TERMIOS_H 0
+#define HAVE_KBHIT 1
+#define HAVE_PEEKNAMEDPIPE 1
+#define HAVE_GETSTDHANDLE 1
+#define HAVE_GETRUSAGE 0
+
+/* FFmpeg components */
+#define CONFIG_AVDEVICE 1
+#define CONFIG_AVFILTER 1
+#define CONFIG_SWSCALE 1
+#define CONFIG_SWRESAMPLE 1
+
+/* Architecture */
+#define ARCH_X86_32 0
+#define ARCH_X86_64 1
+
+/* Threading */
+#define HAVE_PTHREADS 0
+#define HAVE_W32THREADS 1
+
+/* Endianness */
+#define HAVE_BIGENDIAN 0
+
+#endif /* CONFIG_H */
+"#;
+        
+        fs::write(&config_h_path, config_h_content)?;
+        println!("✓ config.h created: {}", config_h_path.display());
+        Ok(())
+    }
+    
+    /// Copy and modify ffmpeg.c
     fn copy_and_modify_ffmpeg_c(&self) -> Result<(), Box<dyn std::error::Error>> {
         let source_file = self.ffmpeg_source_dir.join("fftools").join("ffmpeg.c");
         let target_file = self.addon_src_dir.join("ffmpeg.c");
         
         if !source_file.exists() {
-            return Err(format!("源文件不存在: {}", source_file.display()).into());
+            return Err(format!("Source file does not exist: {}", source_file.display()).into());
         }
         
-        println!("正在复制并修改 ffmpeg.c...");
+        println!("Copying and modifying ffmpeg.c...");
         
-        // 读取源文件
         let content = fs::read_to_string(&source_file)?;
-        
-        // 修改内容
         let modified_content = self.modify_ffmpeg_c_content(&content)?;
-        
-        // 写入目标文件
         fs::write(&target_file, modified_content)?;
         
-        println!("✓ ffmpeg.c 已复制并修改到: {}", target_file.display());
+        println!("✓ ffmpeg.c copied and modified to: {}", target_file.display());
         Ok(())
     }
     
-    /// 修改 ffmpeg.c 的内容
+    /// Modify ffmpeg.c content
     fn modify_ffmpeg_c_content(&self, content: &str) -> Result<String, Box<dyn std::error::Error>> {
         let mut modified = content.to_string();
         
-        // 1. 将 transcode 从 static 改为公开函数
         modified = modified.replace("static int transcode(Scheduler *sch)", "int transcode(Scheduler *sch)");
-        
-        // 2. 将 ffmpeg_cleanup 从 static 改为公开函数
         modified = modified.replace("static void ffmpeg_cleanup(int ret)", "void ffmpeg_cleanup(int ret)");
-        
-        // 3. 删除 main 函数
         modified = self.remove_main_function(&modified)?;
-        
-        // 4. 确保必要的函数是公开的（已在步骤1-2完成）
+        modified = self.add_napi_include(&modified)?;
         modified = self.add_ffmpeg_run_function(&modified)?;
         
         Ok(modified)
     }
     
-    /// 删除 main 函数
+    /// Add node_api.h include
+    fn add_napi_include(&self, content: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let include_marker = "#include \"ffmpeg_utils.h\"";
+        if content.contains("#include <node_api.h>") {
+            return Ok(content.to_string());
+        }
+        
+        if let Some(pos) = content.find(include_marker) {
+            let insert_pos = pos + include_marker.len();
+            let result = format!("{}\n#include <node_api.h>\n{}", 
+                &content[..insert_pos],
+                &content[insert_pos..]
+            );
+            return Ok(result);
+        }
+        
+        Ok(content.to_string())
+    }
+    
+    /// Remove main function
     fn remove_main_function(&self, content: &str) -> Result<String, Box<dyn std::error::Error>> {
-        // 查找 main 函数的开始位置
         let main_start = "int main(int argc, char **argv)";
         if let Some(start_pos) = content.find(main_start) {
-            // 找到函数体的开始大括号
             let func_start = content[start_pos..].find('{');
             if let Some(func_start_pos) = func_start {
                 let brace_start = start_pos + func_start_pos;
                 
-                // 使用简单的字符串匹配找到对应的结束大括号
                 let mut brace_count = 0;
                 let mut in_string = false;
                 let mut escape_next = false;
@@ -139,11 +188,9 @@ impl AddonPreparer {
                 }
                 
                 if let Some(end) = end_pos {
-                    // 删除 main 函数，只保留前后的内容
                     let before = &content[..start_pos];
                     let after = &content[end..];
                     
-                    // 添加注释说明 main 函数已被删除
                     let result = format!("{}/*\n * Main function removed for Node.js addon\n * Use ffmpeg_run() instead\n */\n{}", 
                         before.trim_end(), 
                         after.trim_start()
@@ -154,319 +201,263 @@ impl AddonPreparer {
             }
         }
         
-        // 如果找不到或匹配失败，直接返回原内容
         Ok(content.to_string())
     }
     
-    /// 添加 ffmpeg_run 辅助函数（用于 Node.js addon）
+    /// Add ffmpeg_run function (N-API implementation for Node.js addon)
     fn add_ffmpeg_run_function(&self, content: &str) -> Result<String, Box<dyn std::error::Error>> {
-        // 不需要添加 C 函数，所有逻辑都在 binding.cpp 中处理
-        // 只需要确保 transcode 和 ffmpeg_cleanup 是公开的即可
-        Ok(content.to_string())
-    }
-    
-    /// 创建 binding.gyp
-    fn create_binding_gyp(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let binding_gyp_path = self.addon_src_dir.join("binding.gyp");
-        
-        // 获取 vcpkg 安装的库路径
-        let vcpkg_installed = self.vcpkg_root.join("installed").join("x64-windows-static");
-        let lib_dir = vcpkg_installed.join("lib");
-        let include_dir = vcpkg_installed.join("include");
-        
-        // 将 Windows 路径转换为正斜杠格式（node-gyp 支持）
-        let lib_dir_str = lib_dir.to_string_lossy().replace("\\", "/");
-        let include_dir_str = include_dir.to_string_lossy().replace("\\", "/");
-        
-        let binding_gyp_content = format!(r#"{{
-  "targets": [
-    {{
-      "target_name": "ffmpeg_node",
-      "sources": [
-        "binding.cpp",
-        "ffmpeg.c",
-        "../ffmpeg/fftools/cmdutils.c",
-        "../ffmpeg/fftools/ffmpeg_dec.c",
-        "../ffmpeg/fftools/ffmpeg_demux.c",
-        "../ffmpeg/fftools/ffmpeg_enc.c",
-        "../ffmpeg/fftools/ffmpeg_filter.c",
-        "../ffmpeg/fftools/ffmpeg_hw.c",
-        "../ffmpeg/fftools/ffmpeg_mux_init.c",
-        "../ffmpeg/fftools/ffmpeg_mux.c",
-        "../ffmpeg/fftools/ffmpeg_opt.c",
-        "../ffmpeg/fftools/ffmpeg_sched.c",
-        "../ffmpeg/fftools/opt_common.c",
-        "../ffmpeg/fftools/sync_queue.c",
-        "../ffmpeg/fftools/thread_queue.c",
-        "../ffmpeg/fftools/objpool.c"
-      ],
-      "include_dirs": [
-        "<!@(node -p \"require('node-addon-api').include\")",
-        "../ffmpeg",
-        "../ffmpeg/fftools",
-        "{}"
-      ],
-      "libraries": [
-        "-L{}",
-        "-lavcodec",
-        "-lavformat",
-        "-lavutil",
-        "-lavfilter",
-        "-lswscale",
-        "-lswresample",
-        "-lavdevice",
-        "-lx264"
-      ],
-      "defines": [
-        "NAPI_DISABLE_CPP_EXCEPTIONS"
-      ],
-      "cflags!": [ "-fno-exceptions" ],
-      "cflags_cc!": [ "-fno-exceptions" ],
-      "xcode_settings": {{
-        "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
-        "CLANG_CXX_LIBRARY": "libc++",
-        "MACOSX_DEPLOYMENT_TARGET": "10.7"
-      }},
-      "msvs_settings": {{
-        "VCCLCompilerTool": {{
-          "ExceptionHandling": 1
-        }}
-      }},
-      "conditions": [
-        ["OS=='win'", {{
-          "libraries": [
-            "-L{}",
-            "avcodec.lib",
-            "avformat.lib",
-            "avutil.lib",
-            "avfilter.lib",
-            "swscale.lib",
-            "swresample.lib",
-            "avdevice.lib",
-            "x264.lib"
-          ]
-        }}]
-      ]
-    }}
-  ]
-}}
-"#, 
-            include_dir_str, lib_dir_str, lib_dir_str
-        );
-        
-        fs::write(&binding_gyp_path, binding_gyp_content)?;
-        println!("✓ binding.gyp 已创建: {}", binding_gyp_path.display());
-        Ok(())
-    }
-    
-    /// 创建 binding.cpp
-    fn create_binding_cpp(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let binding_cpp_path = self.addon_src_dir.join("binding.cpp");
-        
-        let binding_cpp_content = r#"#include <napi.h>
-#include <vector>
-#include <string>
-#include <cstring>
-#include <cstdio>
-#include <cstdint>
-
-// 包含 ffmpeg 头文件
-#include "ffmpeg.h"
-#include "ffmpeg_sched.h"
-#include "cmdutils.h"
-
-// 声明必要的函数和变量
-extern "C" {
-    // 从 cmdutils.c 中需要的函数
-    void init_dynload(void);
-    void parse_loglevel(int argc, char **argv, const OptionDef *options);
-    void avformat_network_init(void);
-    void av_log_set_flags(int flags);
-    
-    #if CONFIG_AVDEVICE
-    void avdevice_register_all(void);
-    #endif
-    
-    // 全局变量
-    extern int nb_output_files;
-    extern int nb_input_files;
-    extern int received_nb_signals;
-    extern int do_benchmark;
-    extern int64_t current_time;
-    extern const OptionDef options[];
-    
-    // 常量定义
-    #ifndef FFMPEG_ERROR_RATE_EXCEEDED
-    #define FFMPEG_ERROR_RATE_EXCEEDED 0x45455245  // 'ERE' in ASCII
-    #endif
-}
-
-// Node.js addon 的 run 函数 - 直接处理所有逻辑
-Napi::Value Run(const Napi::CallbackInfo& info) {
-    Napi::Env env = info.Env();
-    
-    // 检查参数
-    if (info.Length() < 1 || !info[0].IsArray()) {
-        Napi::TypeError::New(env, "Expected an array of arguments")
-            .ThrowAsJavaScriptException();
-        return env.Null();
-    }
-    
-    // 获取参数数组
-    Napi::Array args_array = info[0].As<Napi::Array>();
-    
-    // 转换为字符串数组
-    std::vector<std::string> string_args;
-    string_args.push_back("ffmpeg"); // 添加程序名
-    
-    // 转换 JavaScript 参数
-    for (uint32_t i = 0; i < args_array.Length(); i++) {
-        Napi::Value val = args_array[i];
-        if (val.IsString()) {
-            string_args.push_back(val.As<Napi::String>().Utf8Value());
-        } else {
-            string_args.push_back(val.ToString().Utf8Value());
+        // 检查是否已经存在 ffmpeg_run 函数
+        if content.contains("napi_value ffmpeg_run") {
+            return Ok(content.to_string());
         }
+        
+        let run_function = r#"
+
+/**
+ * Run ffmpeg with arguments (N-API function for Node.js addon)
+ * This function replaces the main() function for use in Node.js addon
+ */
+napi_value ffmpeg_run(napi_env env, napi_callback_info info)
+{
+    napi_status status;
+    size_t argc = 1;
+    napi_value argv[1];
+    napi_value result;
+    Scheduler *sch = NULL;
+    int ret;
+    BenchmarkTimeStamps ti;
+    
+    // 获取参数
+    status = napi_get_cb_info(env, info, &argc, argv, NULL, NULL);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to get callback info");
+        return NULL;
     }
     
-    // 创建 C 风格的参数数组（需要保持字符串的生命周期）
-    static thread_local std::vector<std::string> persistent_args;
-    persistent_args = string_args;
-    
-    std::vector<char*> argv;
-    for (auto& str : persistent_args) {
-        argv.push_back(const_cast<char*>(str.c_str()));
+    if (argc < 1) {
+        napi_throw_type_error(env, "Expected an array of arguments");
+        return NULL;
     }
     
-    int argc = static_cast<int>(argv.size());
+    // 检查第一个参数是否为数组
+    napi_valuetype valuetype;
+    status = napi_typeof(env, argv[0], &valuetype);
+    if (status != napi_ok || valuetype != napi_object) {
+        napi_throw_type_error(env, "Expected an array of arguments");
+        return NULL;
+    }
     
-    // 初始化 ffmpeg
+    // 检查是否为数组
+    bool is_array;
+    status = napi_is_array(env, argv[0], &is_array);
+    if (status != napi_ok || !is_array) {
+        napi_throw_type_error(env, "Expected an array of arguments");
+        return NULL;
+    }
+    
+    // 获取数组长度
+    uint32_t array_length;
+    status = napi_get_array_length(env, argv[0], &array_length);
+    if (status != napi_ok) {
+        napi_throw_error(env, NULL, "Failed to get array length");
+        return NULL;
+    }
+    
+    // 分配内存存储字符串参数
+    // 需要额外一个位置给"ffmpeg"程序名
+    int total_args = (int)array_length + 1;
+    char **argv_ptr = (char **)av_mallocz(sizeof(char *) * total_args);
+    if (!argv_ptr) {
+        napi_throw_error(env, NULL, "Failed to allocate memory");
+        return NULL;
+    }
+    
+    // 存储字符串内容的内存（需要持久化）
+    char **str_storage = (char **)av_mallocz(sizeof(char *) * total_args);
+    if (!str_storage) {
+        av_free(argv_ptr);
+        napi_throw_error(env, NULL, "Failed to allocate memory");
+        return NULL;
+    }
+    
+    // 第一个参数是程序名
+    argv_ptr[0] = "ffmpeg";
+    
+    // 从JavaScript数组提取字符串参数
+    for (uint32_t i = 0; i < array_length; i++) {
+        napi_value element;
+        status = napi_get_element(env, argv[0], i, &element);
+        if (status != napi_ok) {
+            // 清理内存
+            for (int j = 0; j < i + 1; j++) {
+                if (str_storage[j]) av_free(str_storage[j]);
+            }
+            av_free(str_storage);
+            av_free(argv_ptr);
+            napi_throw_error(env, NULL, "Failed to get array element");
+            return NULL;
+        }
+        
+        // 获取字符串值
+        size_t str_len;
+        status = napi_get_value_string_utf8(env, element, NULL, 0, &str_len);
+        if (status != napi_ok) {
+            // 清理内存
+            for (int j = 0; j < i + 1; j++) {
+                if (str_storage[j]) av_free(str_storage[j]);
+            }
+            av_free(str_storage);
+            av_free(argv_ptr);
+            napi_throw_type_error(env, "Array element must be a string");
+            return NULL;
+        }
+        
+        // 分配内存并复制字符串
+        str_storage[i + 1] = (char *)av_mallocz(str_len + 1);
+        if (!str_storage[i + 1]) {
+            // 清理内存
+            for (int j = 0; j < i + 1; j++) {
+                if (str_storage[j]) av_free(str_storage[j]);
+            }
+            av_free(str_storage);
+            av_free(argv_ptr);
+            napi_throw_error(env, NULL, "Failed to allocate memory for string");
+            return NULL;
+        }
+        
+        size_t copied;
+        status = napi_get_value_string_utf8(env, element, str_storage[i + 1], str_len + 1, &copied);
+        if (status != napi_ok) {
+            // 清理内存
+            for (int j = 0; j < i + 2; j++) {
+                if (str_storage[j]) av_free(str_storage[j]);
+            }
+            av_free(str_storage);
+            av_free(argv_ptr);
+            napi_throw_error(env, NULL, "Failed to get string value");
+            return NULL;
+        }
+        
+        argv_ptr[i + 1] = str_storage[i + 1];
+    }
+    
+    // 调用ffmpeg核心逻辑
     init_dynload();
     
-    // 设置 stderr 缓冲（Windows 需要）
-    #ifdef _WIN32
     setvbuf(stderr, NULL, _IONBF, 0);
-    #endif
     
-    // 设置日志标志
     av_log_set_flags(AV_LOG_SKIP_REPEATED);
+    parse_loglevel(total_args, argv_ptr, options);
     
-    // 解析日志级别
-    parse_loglevel(argc, argv.data(), options);
-    
-    // 注册设备
-    #if CONFIG_AVDEVICE
+#if CONFIG_AVDEVICE
     avdevice_register_all();
-    #endif
-    
-    // 初始化网络
+#endif
     avformat_network_init();
     
-    // 分配调度器
-    Scheduler *sch = sch_alloc();
+    sch = sch_alloc();
     if (!sch) {
-        return Napi::Number::New(env, AVERROR(ENOMEM));
+        ret = AVERROR(ENOMEM);
+        goto finish;
     }
     
-    // 解析选项
-    int ret = ffmpeg_parse_options(argc, argv.data(), sch);
-    if (ret < 0) {
-        sch_free(&sch);
-        return Napi::Number::New(env, ret);
-    }
+    ret = ffmpeg_parse_options(total_args, argv_ptr, sch);
+    if (ret < 0)
+        goto finish;
     
-    // 检查输入/输出文件
     if (nb_output_files <= 0 && nb_input_files == 0) {
-        sch_free(&sch);
-        ffmpeg_cleanup(1);
-        return Napi::Number::New(env, 1);
+        av_log(NULL, AV_LOG_WARNING, "No input or output files specified\n");
+        ret = 1;
+        goto finish;
     }
     
     if (nb_output_files <= 0) {
-        sch_free(&sch);
-        ffmpeg_cleanup(1);
-        return Napi::Number::New(env, 1);
+        av_log(NULL, AV_LOG_FATAL, "At least one output file must be specified\n");
+        ret = 1;
+        goto finish;
     }
     
-    // 执行转码
+    current_time = ti = get_benchmark_time_stamps();
     ret = transcode(sch);
-    
-    // 处理返回值
-    if (ret == AVERROR_EXIT) {
-        ret = 0;
-    } else if (received_nb_signals) {
-        ret = 255;
-    } else if (ret == FFMPEG_ERROR_RATE_EXCEEDED) {
-        ret = 69;
+    if (ret >= 0 && do_benchmark) {
+        int64_t utime, stime, rtime;
+        current_time = get_benchmark_time_stamps();
+        utime = current_time.user_usec - ti.user_usec;
+        stime = current_time.sys_usec  - ti.sys_usec;
+        rtime = current_time.real_usec - ti.real_usec;
+        av_log(NULL, AV_LOG_INFO,
+               "bench: utime=%0.3fs stime=%0.3fs rtime=%0.3fs\n",
+               utime / 1000000.0, stime / 1000000.0, rtime / 1000000.0);
     }
     
-    // 清理
+    ret = received_nb_signals                 ? 255 :
+          (ret == FFMPEG_ERROR_RATE_EXCEEDED) ?  69 : ret;
+    
+finish:
+    if (ret == AVERROR_EXIT)
+        ret = 0;
+    
     ffmpeg_cleanup(ret);
+    
     sch_free(&sch);
     
-    return Napi::Number::New(env, ret);
+    // 清理字符串内存
+    for (int i = 1; i < total_args; i++) {
+        if (str_storage[i]) av_free(str_storage[i]);
+    }
+    av_free(str_storage);
+    av_free(argv_ptr);
+    
+    // 返回结果
+    status = napi_create_int32(env, ret, &result);
+    if (status != napi_ok) {
+        return NULL;
+    }
+    
+    return result;
 }
+"#;
+        
+        Ok(format!("{}{}", content, run_function))
+    }
+    
+    /// Create binding.c
+    fn create_binding_c(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let binding_c_path = self.addon_src_dir.join("binding.c");
+        
+        let binding_c_content = r#"#include <node_api.h>
 
-// 初始化 Node.js addon
-Napi::Object Init(Napi::Env env, Napi::Object exports) {
-    exports.Set(
-        Napi::String::New(env, "run"),
-        Napi::Function::New(env, Run)
-    );
+// 声明ffmpeg.c中的napi函数
+extern napi_value ffmpeg_run(napi_env env, napi_callback_info info);
+
+napi_value Init(napi_env env, napi_value exports)
+{
+    napi_status status;
+    napi_value fn;
+    
+    // 创建run函数
+    status = napi_create_function(env, NULL, 0, ffmpeg_run, NULL, &fn);
+    if (status != napi_ok) {
+        return NULL;
+    }
+    
+    // 将run函数添加到exports对象
+    status = napi_set_named_property(env, exports, "run", fn);
+    if (status != napi_ok) {
+        return NULL;
+    }
+    
     return exports;
 }
 
-NODE_API_MODULE(ffmpeg_node, Init)
+NAPI_MODULE(NODE_GYP_MODULE_NAME, Init)
 "#;
         
-        fs::write(&binding_cpp_path, binding_cpp_content)?;
-        println!("✓ binding.cpp 已创建: {}", binding_cpp_path.display());
+        fs::write(&binding_c_path, binding_c_content)?;
+        println!("✓ binding.c created: {}", binding_c_path.display());
         Ok(())
     }
     
-    /// 创建 package.json
-    fn create_package_json(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let package_json_path = self.addon_src_dir.join("package.json");
-        
-        // 如果已存在，检查是否需要更新
-        if package_json_path.exists() {
-            println!("✓ package.json 已存在，跳过创建");
-            return Ok(());
-        }
-        
-        let package_json_content = r#"{
-  "name": "ffmpeg-node",
-  "version": "1.0.0",
-  "description": "FFmpeg Node.js native addon",
-  "main": "index.js",
-  "gypfile": true,
-  "scripts": {
-    "build": "node-gyp rebuild",
-    "install": "node-gyp rebuild"
-  },
-  "keywords": [
-    "ffmpeg",
-    "video",
-    "audio",
-    "codec"
-  ],
-  "author": "",
-  "license": "LGPL-2.1",
-  "dependencies": {
-    "node-addon-api": "^7.0.0"
-  },
-  "devDependencies": {
-    "node-gyp": "^10.0.0"
-  }
-}
-"#;
-        
-        fs::write(&package_json_path, package_json_content)?;
-        println!("✓ package.json 已创建: {}", package_json_path.display());
-        Ok(())
-    }
-    
-    /// 获取 addon_src 目录
+    /// Get addon_src directory
     pub fn get_addon_src_dir(&self) -> &Path {
         &self.addon_src_dir
     }

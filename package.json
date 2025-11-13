@@ -1,0 +1,24 @@
+{
+  "name": "ffmpeg-node",
+  "version": "1.0.0",
+  "description": "FFmpeg Node.js native addon",
+  "main": "index.js",
+  "gypfile": true,
+  "scripts": {
+    "build": "node-gyp rebuild"
+  },
+  "keywords": [
+    "ffmpeg",
+    "video",
+    "audio",
+    "codec"
+  ],
+  "author": "",
+  "license": "LGPL-2.1",
+  "dependencies": {
+    "node-addon-api": "latest"
+  },
+  "devDependencies": {
+    "node-gyp": "latest"
+  }
+}

@@ -2,3 +2,4 @@
 /vcpkg
 ffmpeg/**/*
 node_modules
+build
