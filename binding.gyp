@@ -28,28 +28,15 @@
         "./ffmpeg/compat/atomics/win32",
         "./vcpkg/installed/x64-windows-static/include"
       ],
-      "libraries": [
-        "-L./vcpkg/installed/x64-windows-static/lib",
-        "-lavcodec",
-        "-lavformat",
-        "-lavutil",
-        "-lavfilter",
-        "-lswscale",
-        "-lswresample",
-        "-lavdevice",
-        "-lx264"
-      ],
       "msvs_settings": {
         "VCCLCompilerTool": {
-          "ExceptionHandling": 0,
-          "CompileAs": "1",
-          "AdditionalOptions": [ "/std:c++17", "/TC" ]
-        }
-      },
-      "conditions": [
-        ["OS=='win'", {
-          "libraries": [
-            "-L./vcpkg/installed/x64-windows-static/lib",
+          "ExceptionHandling": 0
+        },
+        "VCLinkerTool": {
+          "AdditionalLibraryDirectories": [
+            "<(module_root_dir)/vcpkg/installed/x64-windows-static/lib"
+          ],
+          "AdditionalDependencies": [
             "avcodec.lib",
             "avformat.lib",
             "avutil.lib",
@@ -57,7 +44,41 @@
             "swscale.lib",
             "swresample.lib",
             "avdevice.lib",
-            "x264.lib"
+            "libx264.lib",
+            "ws2_32.lib",
+            "secur32.lib",
+            "bcrypt.lib",
+            "strmiids.lib",
+            "ole32.lib",
+            "oleaut32.lib",
+            "vfw32.lib",
+            "mfplat.lib",
+            "mfuuid.lib",
+            "shlwapi.lib"
+          ]
+        }
+      },
+      "msvs_configurations": {
+        "Release": {
+          "msvs_settings": {
+            "VCCLCompilerTool": {
+              "CompileAs": "1"
+            }
+          }
+        }
+      },
+      "conditions": [
+        ["OS!='win'", {
+          "libraries": [
+            "-L./vcpkg/installed/x64-windows-static/lib",
+            "-lavcodec",
+            "-lavformat",
+            "-lavutil",
+            "-lavfilter",
+            "-lswscale",
+            "-lswresample",
+            "-lavdevice",
+            "-lx264"
           ]
         }]
       ]

@@ -972,7 +972,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     }
     
     if (argc < 1) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -980,7 +980,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     napi_valuetype valuetype;
     status = napi_typeof(env, argv[0], &valuetype);
     if (status != napi_ok || valuetype != napi_object) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -988,7 +988,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
     bool is_array;
     status = napi_is_array(env, argv[0], &is_array);
     if (status != napi_ok || !is_array) {
-        napi_throw_type_error(env, "Expected an array of arguments");
+        napi_throw_type_error(env, NULL, "Expected an array of arguments");
         return NULL;
     }
     
@@ -1045,7 +1045,7 @@ napi_value ffmpeg_run(napi_env env, napi_callback_info info)
             }
             av_free(str_storage);
             av_free(argv_ptr);
-            napi_throw_type_error(env, "Array element must be a string");
+            napi_throw_type_error(env, NULL, "Array element must be a string");
             return NULL;
         }
         
