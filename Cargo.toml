@@ -1,0 +1,11 @@
+[package]
+name = "vcpkg_ff"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+vcpkg = "0.2"
+
+[dependencies]
+flate2 = "1.0"
+tar = "0.4"

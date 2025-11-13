@@ -1,0 +1,4 @@
+/target
+/vcpkg
+ffmpeg/**/*
+node_modules

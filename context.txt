@@ -1,0 +1,11 @@
+我的目标最终是将原本ffmpeg cli工具构建成nodejs可用的原生模块
+大致的使用是 
+```javascript
+import {run} from 'ffmpeg-node'
+
+run(["-i","input.mp4","-vf","scale=1920:1080",...])
+//同等ffmpeg cli的功能
+```
+
+目前我使用vcpkg构建了静态库，也将源码解压到根目录。
+复制一份ffmpeg.c到addon_src，大致的原理应该是分析ffmpeg.c。新增一个run函数用于公开给addon，也需要移除main函数.暴露给node_api
