@@ -602,17 +602,24 @@ finish:
         
         let content = fs::read_to_string(&ffmpeg_dec_c_path)?;
         
-        // 检查是否已经修改过
-        if content.contains("#include \"compat/stdbit/stdbit.h\"") && 
-           content.contains("/* MSVC compatibility for stdbit functions */") {
-            println!("✓ ffmpeg_dec.c already modified, skipping");
+        // 检查是否已经修改过（Windows）或不需要修改（macOS/Linux）
+        if cfg!(target_os = "windows") {
+            if content.contains("#include \"compat/stdbit/stdbit.h\"") && 
+               content.contains("/* MSVC compatibility for stdbit functions */") {
+                println!("✓ ffmpeg_dec.c already modified, skipping");
+                return Ok(());
+            }
+        } else {
+            // macOS/Linux 不需要修改，直接返回
+            println!("✓ ffmpeg_dec.c: macOS/Linux uses system stdbit.h, no modification needed");
             return Ok(());
         }
         
         let mut modified = content.clone();
         
-        // 替换系统 stdbit.h 为 ffmpeg 的兼容版本
-        if modified.contains("#include <stdbit.h>") {
+        // 只在 Windows 上替换系统 stdbit.h 为 ffmpeg 的兼容版本
+        // macOS/Linux 可以使用系统的 stdbit.h（C23 标准库）
+        if cfg!(target_os = "windows") && modified.contains("#include <stdbit.h>") {
             modified = modified.replace(
                 "#include <stdbit.h>",
                 "#include \"compat/stdbit/stdbit.h\""
