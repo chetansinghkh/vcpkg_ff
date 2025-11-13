@@ -5,7 +5,7 @@ use vcpkg_manager::VcpkgManager;
 use addon_preparer::AddonPreparer;
 
 fn main() {
-    println!("=== vcpkg FFmpeg/x264 Installer ===\n");
+    println!("=== vcpkg FFmpeg/x264/x265/vpx Installer ===\n");
     
     let manager = VcpkgManager::new();
     
