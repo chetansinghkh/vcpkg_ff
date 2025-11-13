@@ -25,6 +25,7 @@
         "<!@(node -p \"require('path').dirname(process.execPath) + '/include/node'\")",
         "./ffmpeg",
         "./ffmpeg/fftools",
+        "./ffmpeg/compat/atomics/win32",
         "./vcpkg/installed/x64-windows-static/include"
       ],
       "libraries": [
