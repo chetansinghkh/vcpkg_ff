@@ -3,3 +3,4 @@
 ffmpeg/**/*
 node_modules
 build
+output*.*

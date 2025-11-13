@@ -39,6 +39,7 @@ impl AddonPreparer {
         
         self.create_config_h()?;
         self.modify_opt_common_c()?;
+        self.modify_ffmpeg_dec_c()?;
         self.copy_and_modify_ffmpeg_c()?;
         self.create_binding_c()?;
         
@@ -469,6 +470,92 @@ finish:
             println!("✓ opt_common.c modified: added CONFIG_POSTPROC conditional compilation");
         } else {
             println!("⚠ Could not find postproc line in opt_common.c, skipping modification");
+        }
+        
+        Ok(())
+    }
+    
+    /// Modify ffmpeg_dec.c to use ffmpeg's compat stdbit.h instead of system stdbit.h
+    /// and add MSVC compatibility for _Generic macro
+    fn modify_ffmpeg_dec_c(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let ffmpeg_dec_c_path = self.ffmpeg_source_dir.join("fftools").join("ffmpeg_dec.c");
+        
+        if !ffmpeg_dec_c_path.exists() {
+            println!("⚠ ffmpeg_dec.c not found, skipping modification");
+            return Ok(());
+        }
+        
+        let content = fs::read_to_string(&ffmpeg_dec_c_path)?;
+        
+        // 检查是否已经修改过
+        if content.contains("#include \"compat/stdbit/stdbit.h\"") && 
+           content.contains("/* MSVC compatibility for stdbit functions */") {
+            println!("✓ ffmpeg_dec.c already modified, skipping");
+            return Ok(());
+        }
+        
+        let mut modified = content.clone();
+        
+        // 替换系统 stdbit.h 为 ffmpeg 的兼容版本
+        if modified.contains("#include <stdbit.h>") {
+            modified = modified.replace(
+                "#include <stdbit.h>",
+                "#include \"compat/stdbit/stdbit.h\""
+            );
+        }
+        
+        // 为 MSVC 添加兼容性宏定义（MSVC 不支持 _Generic）
+        // 在包含 stdbit.h 之后添加 MSVC 特定的兼容性定义
+        if modified.contains("#include \"compat/stdbit/stdbit.h\"") {
+            let msvc_compat = r#"
+/* MSVC compatibility for stdbit functions - MSVC doesn't support _Generic */
+#ifdef _MSC_VER
+/* Undefine the _Generic-based macros from compat header */
+#undef stdc_count_ones
+#undef stdc_trailing_zeros
+/* Provide explicit implementations for unsigned int (used in this file) */
+static inline unsigned int stdc_count_ones_ui_compat(unsigned int value) {
+    unsigned int count = 0;
+    while (value) {
+        count += value & 1;
+        value >>= 1;
+    }
+    return count;
+}
+#define stdc_count_ones(value) stdc_count_ones_ui_compat((unsigned int)(value))
+
+static inline unsigned int stdc_trailing_zeros_ui_compat(unsigned int value) {
+    if (!value) return sizeof(unsigned int) * 8;
+    unsigned int count = 0;
+    while ((value & 1) == 0) {
+        value >>= 1;
+        count++;
+    }
+    return count;
+}
+#define stdc_trailing_zeros(value) stdc_trailing_zeros_ui_compat((unsigned int)(value))
+#endif /* _MSC_VER */
+"#;
+            
+            // 在 stdbit.h 包含之后添加 MSVC 兼容性代码
+            if let Some(include_pos) = modified.find("#include \"compat/stdbit/stdbit.h\"") {
+                let after_include = include_pos + "#include \"compat/stdbit/stdbit.h\"".len();
+                let next_line = modified[after_include..].find('\n').unwrap_or(0);
+                let insert_pos = after_include + next_line + 1;
+                
+                modified = format!("{}{}{}", 
+                    &modified[..insert_pos],
+                    msvc_compat,
+                    &modified[insert_pos..]
+                );
+            }
+        }
+        
+        if modified != content {
+            fs::write(&ffmpeg_dec_c_path, modified)?;
+            println!("✓ ffmpeg_dec.c modified: replaced <stdbit.h> with compat version and added MSVC compatibility");
+        } else {
+            println!("⚠ Could not find <stdbit.h> in ffmpeg_dec.c, skipping modification");
         }
         
         Ok(())

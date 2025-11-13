@@ -45,7 +45,7 @@
             "swresample.lib",
             "avdevice.lib",
             "libx264.lib",
-            "libx265.lib",
+            "x265-static.lib",
             "vpx.lib",
             "ws2_32.lib",
             "secur32.lib",
@@ -56,7 +56,11 @@
             "vfw32.lib",
             "mfplat.lib",
             "mfuuid.lib",
-            "shlwapi.lib"
+            "shlwapi.lib",
+            "user32.lib",
+            "gdi32.lib",
+            "winmm.lib",
+            "psapi.lib"
           ]
         }
       },
