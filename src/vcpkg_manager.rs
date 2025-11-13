@@ -10,6 +10,7 @@ use tar::Archive;
 pub struct VcpkgManager {
     vcpkg_root: PathBuf,
     vcpkg_exe: PathBuf,
+    triplet: String,
 }
 
 impl VcpkgManager {
@@ -22,17 +23,33 @@ impl VcpkgManager {
                 .join("vcpkg")
         };
         
-        let vcpkg_exe = vcpkg_root.join("vcpkg.exe");
+        // Detect platform and set appropriate vcpkg executable and triplet
+        let (vcpkg_exe_name, triplet) = if cfg!(target_os = "windows") {
+            ("vcpkg.exe", "x64-windows-static")
+        } else if cfg!(target_os = "macos") {
+            ("vcpkg", "x64-osx")
+        } else {
+            ("vcpkg", "x64-linux")
+        };
+        
+        let vcpkg_exe = vcpkg_root.join(vcpkg_exe_name);
         
         Self {
             vcpkg_root,
             vcpkg_exe,
+            triplet: triplet.to_string(),
         }
     }
     
     /// Check if vcpkg is installed
     pub fn is_installed(&self) -> bool {
         self.vcpkg_exe.exists()
+    }
+    
+    /// Get triplet for current platform
+    #[allow(dead_code)]
+    pub fn get_triplet(&self) -> &str {
+        &self.triplet
     }
     
     /// Check if git is available
@@ -85,19 +102,33 @@ impl VcpkgManager {
         }
         
         println!("Running bootstrap script...");
-        let bootstrap_script = self.vcpkg_root.join("bootstrap-vcpkg.bat");
-        let status = Command::new(&bootstrap_script)
-            .current_dir(&self.vcpkg_root)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
+        let bootstrap_script = if cfg!(target_os = "windows") {
+            self.vcpkg_root.join("bootstrap-vcpkg.bat")
+        } else {
+            self.vcpkg_root.join("bootstrap-vcpkg.sh")
+        };
+        
+        let status = if cfg!(target_os = "windows") {
+            Command::new(&bootstrap_script)
+                .current_dir(&self.vcpkg_root)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?
+        } else {
+            Command::new("bash")
+                .arg(&bootstrap_script)
+                .current_dir(&self.vcpkg_root)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?
+        };
         
         if !status.success() {
             return Err("vcpkg bootstrap failed".into());
         }
         
         if !self.vcpkg_exe.exists() {
-            return Err("vcpkg.exe was not generated, bootstrap may have failed".into());
+            return Err("vcpkg executable was not generated, bootstrap may have failed".into());
         }
         
         println!("vcpkg installation completed!");
@@ -114,7 +145,7 @@ impl VcpkgManager {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Check if ffmpeg is installed and contains all required features
-                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                if stdout.contains("ffmpeg") && stdout.contains(&self.triplet) {
                     return features.iter().all(|feature| stdout.contains(feature));
                 }
             }
@@ -154,13 +185,13 @@ impl VcpkgManager {
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                if stdout.contains("ffmpeg") && stdout.contains(&self.triplet) {
                     println!("⚠ ffmpeg is installed but without required codec features");
                     println!("Removing ffmpeg to reinstall with full codec support...");
                     let status = Command::new(&self.vcpkg_exe)
                         .args(&[
                             "remove",
-                            "ffmpeg:x64-windows-static",
+                            &format!("ffmpeg:{}", self.triplet),
                         ])
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
@@ -174,7 +205,7 @@ impl VcpkgManager {
             }
         }
         
-        println!("Installing ffmpeg[x264,x265,vpx]:x64-windows-static...");
+        println!("Installing ffmpeg[x264,x265,vpx]:{}...", self.triplet);
         println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
         println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)");
         println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
@@ -182,7 +213,7 @@ impl VcpkgManager {
         let status = Command::new(&self.vcpkg_exe)
             .args(&[
                 "install",
-                "ffmpeg[x264,x265,vpx]:x64-windows-static",
+                &format!("ffmpeg[x264,x265,vpx]:{}", self.triplet),
             ])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())

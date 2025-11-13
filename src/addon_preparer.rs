@@ -56,7 +56,22 @@ impl AddonPreparer {
             return Ok(());
         }
         
-        let config_h_content = r#"/* config.h - Generated for Windows build */
+        let config_h_content = if cfg!(target_os = "windows") {
+            self.create_windows_config_h()
+        } else if cfg!(target_os = "macos") {
+            self.create_macos_config_h()
+        } else {
+            self.create_linux_config_h()
+        };
+        
+        fs::write(&config_h_path, config_h_content)?;
+        println!("✓ config.h created: {}", config_h_path.display());
+        Ok(())
+    }
+    
+    /// Create Windows config.h
+    fn create_windows_config_h(&self) -> String {
+        r#"/* config.h - Generated for Windows build */
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -110,11 +125,111 @@ impl AddonPreparer {
 #define FFMPEG_VERSION "N/A"
 
 #endif /* CONFIG_H */
-"#;
-        
-        fs::write(&config_h_path, config_h_content)?;
-        println!("✓ config.h created: {}", config_h_path.display());
-        Ok(())
+"#.to_string()
+    }
+    
+    /// Create macOS config.h
+    fn create_macos_config_h(&self) -> String {
+        r#"/* config.h - Generated for macOS build */
+#ifndef CONFIG_H
+#define CONFIG_H
+
+/* macOS specific defines */
+#define HAVE_UNISTD_H 1
+#define HAVE_SYS_RESOURCE_H 1
+#define HAVE_GETRUSAGE 1
+#define HAVE_SYS_SELECT_H 1
+#define HAVE_TERMIOS_H 1
+
+/* FFmpeg components */
+#define CONFIG_AVUTIL 1
+#define CONFIG_AVCODEC 1
+#define CONFIG_AVFORMAT 1
+#define CONFIG_AVDEVICE 1
+#define CONFIG_AVFILTER 1
+#define CONFIG_SWSCALE 1
+#define CONFIG_SWRESAMPLE 1
+#define CONFIG_POSTPROC 0
+
+/* Architecture */
+#define ARCH_X86_32 0
+#define ARCH_X86_64 1
+
+/* Threading */
+#define HAVE_PTHREADS 1
+#define HAVE_W32THREADS 0
+
+/* Endianness */
+#define HAVE_BIGENDIAN 0
+
+/* Math functions */
+#define HAVE_LRINT 1
+#define HAVE_LRINTF 1
+
+/* FFmpeg data directory - empty for Node.js addon */
+#define FFMPEG_DATADIR ""
+#define AVCONV_DATADIR ""
+
+/* Build configuration */
+#define CONFIG_THIS_YEAR 2025
+#define FFMPEG_CONFIGURATION "macOS build for Node.js addon"
+#define CC_IDENT "clang"
+#define FFMPEG_VERSION "N/A"
+
+#endif /* CONFIG_H */
+"#.to_string()
+    }
+    
+    /// Create Linux config.h
+    fn create_linux_config_h(&self) -> String {
+        r#"/* config.h - Generated for Linux build */
+#ifndef CONFIG_H
+#define CONFIG_H
+
+/* Linux specific defines */
+#define HAVE_UNISTD_H 1
+#define HAVE_SYS_RESOURCE_H 1
+#define HAVE_GETRUSAGE 1
+#define HAVE_SYS_SELECT_H 1
+#define HAVE_TERMIOS_H 1
+
+/* FFmpeg components */
+#define CONFIG_AVUTIL 1
+#define CONFIG_AVCODEC 1
+#define CONFIG_AVFORMAT 1
+#define CONFIG_AVDEVICE 1
+#define CONFIG_AVFILTER 1
+#define CONFIG_SWSCALE 1
+#define CONFIG_SWRESAMPLE 1
+#define CONFIG_POSTPROC 0
+
+/* Architecture */
+#define ARCH_X86_32 0
+#define ARCH_X86_64 1
+
+/* Threading */
+#define HAVE_PTHREADS 1
+#define HAVE_W32THREADS 0
+
+/* Endianness */
+#define HAVE_BIGENDIAN 0
+
+/* Math functions */
+#define HAVE_LRINT 1
+#define HAVE_LRINTF 1
+
+/* FFmpeg data directory - empty for Node.js addon */
+#define FFMPEG_DATADIR ""
+#define AVCONV_DATADIR ""
+
+/* Build configuration */
+#define CONFIG_THIS_YEAR 2025
+#define FFMPEG_CONFIGURATION "Linux build for Node.js addon"
+#define CC_IDENT "gcc"
+#define FFMPEG_VERSION "N/A"
+
+#endif /* CONFIG_H */
+"#.to_string()
     }
     
     /// Copy and modify ffmpeg.c
@@ -476,7 +591,7 @@ finish:
     }
     
     /// Modify ffmpeg_dec.c to use ffmpeg's compat stdbit.h instead of system stdbit.h
-    /// and add MSVC compatibility for _Generic macro
+    /// and add MSVC compatibility for _Generic macro (Windows only)
     fn modify_ffmpeg_dec_c(&self) -> Result<(), Box<dyn std::error::Error>> {
         let ffmpeg_dec_c_path = self.ffmpeg_source_dir.join("fftools").join("ffmpeg_dec.c");
         
@@ -504,9 +619,9 @@ finish:
             );
         }
         
-        // 为 MSVC 添加兼容性宏定义（MSVC 不支持 _Generic）
+        // 为 MSVC 添加兼容性宏定义（MSVC 不支持 _Generic，macOS/Linux 不需要）
         // 在包含 stdbit.h 之后添加 MSVC 特定的兼容性定义
-        if modified.contains("#include \"compat/stdbit/stdbit.h\"") {
+        if cfg!(target_os = "windows") && modified.contains("#include \"compat/stdbit/stdbit.h\"") {
             let msvc_compat = r#"
 /* MSVC compatibility for stdbit functions - MSVC doesn't support _Generic */
 #ifdef _MSC_VER

@@ -25,8 +25,8 @@
         "<!@(node -p \"require('path').dirname(process.execPath) + '/include/node'\")",
         "./ffmpeg",
         "./ffmpeg/fftools",
-        "./ffmpeg/compat/atomics/win32",
-        "./vcpkg/installed/x64-windows-static/include"
+        "<!@(node -p \"process.platform === 'win32' ? './ffmpeg/compat/atomics/win32' : ''\")",
+        "<!@(node -p \"process.platform === 'win32' ? './vcpkg/installed/x64-windows-static/include' : (process.platform === 'darwin' ? './vcpkg/installed/x64-osx/include' : './vcpkg/installed/x64-linux/include')\")"
       ],
       "msvs_settings": {
         "VCCLCompilerTool": {
@@ -74,9 +74,30 @@
         }
       },
       "conditions": [
-        ["OS!='win'", {
+        ["OS=='mac'", {
           "libraries": [
-            "-L./vcpkg/installed/x64-windows-static/lib",
+            "<!@(node -p \"'-L' + require('path').join(process.cwd(), 'vcpkg/installed/x64-osx/lib')\")",
+            "-lavcodec",
+            "-lavformat",
+            "-lavutil",
+            "-lavfilter",
+            "-lswscale",
+            "-lswresample",
+            "-lavdevice",
+            "-lx264",
+            "-lx265",
+            "-lvpx"
+          ],
+          "xcode_settings": {
+            "OTHER_CPLUSPLUSFLAGS": ["-std=c++17"],
+            "OTHER_LDFLAGS": [
+              "<!@(node -p \"'-L' + require('path').join(process.cwd(), 'vcpkg/installed/x64-osx/lib')\")"
+            ]
+          }
+        }],
+        ["OS=='linux'", {
+          "libraries": [
+            "<!@(node -p \"'-L' + require('path').join(process.cwd(), 'vcpkg/installed/x64-linux/lib')\")",
             "-lavcodec",
             "-lavformat",
             "-lavutil",

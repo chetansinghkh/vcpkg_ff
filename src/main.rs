@@ -5,7 +5,15 @@ use vcpkg_manager::VcpkgManager;
 use addon_preparer::AddonPreparer;
 
 fn main() {
-    println!("=== vcpkg FFmpeg/x264 Installer ===\n");
+    let platform = if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Linux"
+    };
+    
+    println!("=== vcpkg FFmpeg/x264/x265/vpx Installer ({}) ===\n", platform);
     
     let manager = VcpkgManager::new();
     
