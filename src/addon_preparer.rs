@@ -602,16 +602,16 @@ finish:
         
         let content = fs::read_to_string(&ffmpeg_dec_c_path)?;
         
-        // 检查是否已经修改过（Windows）或不需要修改（macOS/Linux）
-        if cfg!(target_os = "windows") {
-            if content.contains("#include \"compat/stdbit/stdbit.h\"") && 
-               content.contains("/* MSVC compatibility for stdbit functions */") {
-                println!("✓ ffmpeg_dec.c already modified, skipping");
-                return Ok(());
-            }
-        } else {
-            // macOS/Linux 不需要修改，直接返回
+        // macOS/Linux 不需要修改，直接返回
+        if !cfg!(target_os = "windows") {
             println!("✓ ffmpeg_dec.c: macOS/Linux uses system stdbit.h, no modification needed");
+            return Ok(());
+        }
+        
+        // 检查是否已经修改过：检查关键函数是否存在
+        // 如果已经存在 stdc_count_ones_ui_compat 函数，说明已经添加过 MSVC 兼容性代码
+        if content.contains("static inline unsigned int stdc_count_ones_ui_compat") {
+            println!("✓ ffmpeg_dec.c already modified, skipping");
             return Ok(());
         }
         
@@ -619,7 +619,7 @@ finish:
         
         // 只在 Windows 上替换系统 stdbit.h 为 ffmpeg 的兼容版本
         // macOS/Linux 可以使用系统的 stdbit.h（C23 标准库）
-        if cfg!(target_os = "windows") && modified.contains("#include <stdbit.h>") {
+        if modified.contains("#include <stdbit.h>") {
             modified = modified.replace(
                 "#include <stdbit.h>",
                 "#include \"compat/stdbit/stdbit.h\""
@@ -628,7 +628,9 @@ finish:
         
         // 为 MSVC 添加兼容性宏定义（MSVC 不支持 _Generic，macOS/Linux 不需要）
         // 在包含 stdbit.h 之后添加 MSVC 特定的兼容性定义
-        if cfg!(target_os = "windows") && modified.contains("#include \"compat/stdbit/stdbit.h\"") {
+        // 再次检查是否已经存在（防止在替换 include 后已经存在的情况）
+        if !modified.contains("static inline unsigned int stdc_count_ones_ui_compat") && 
+           modified.contains("#include \"compat/stdbit/stdbit.h\"") {
             let msvc_compat = r#"
 /* MSVC compatibility for stdbit functions - MSVC doesn't support _Generic */
 #ifdef _MSC_VER
