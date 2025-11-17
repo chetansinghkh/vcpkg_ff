@@ -1,4 +1,7 @@
 {
+  "variables": {
+    "triplet%": "<!(node -e \"const os = require('os'); const arch = os.arch(); const platform = os.platform(); let triplet = 'x64-linux'; if (platform === 'win32') { triplet = 'x64-windows-static'; } else if (platform === 'darwin') { triplet = arch === 'arm64' ? 'arm64-osx' : 'x64-osx'; } else if (platform === 'linux') { triplet = 'x64-linux'; } console.log(triplet);\")"
+  },
   "targets": [
     {
       "target_name": "ffmpeg_node",
@@ -25,58 +28,62 @@
         "<!@(node -p \"require('path').dirname(process.execPath) + '/include/node'\")",
         "./ffmpeg",
         "./ffmpeg/fftools",
-        "./ffmpeg/compat/atomics/win32",
-        "./vcpkg/installed/x64-windows-static/include"
+        "<(module_root_dir)/vcpkg/installed/<(triplet)/include"
       ],
-      "msvs_settings": {
-        "VCCLCompilerTool": {
-          "ExceptionHandling": 0
-        },
-        "VCLinkerTool": {
-          "AdditionalLibraryDirectories": [
-            "<(module_root_dir)/vcpkg/installed/x64-windows-static/lib"
+      "conditions": [
+        ["OS=='win'", {
+          "include_dirs": [
+            "./ffmpeg/compat/atomics/win32"
           ],
-          "AdditionalDependencies": [
-            "avcodec.lib",
-            "avformat.lib",
-            "avutil.lib",
-            "avfilter.lib",
-            "swscale.lib",
-            "swresample.lib",
-            "avdevice.lib",
-            "libx264.lib",
-            "x265-static.lib",
-            "vpx.lib",
-            "ws2_32.lib",
-            "secur32.lib",
-            "bcrypt.lib",
-            "strmiids.lib",
-            "ole32.lib",
-            "oleaut32.lib",
-            "vfw32.lib",
-            "mfplat.lib",
-            "mfuuid.lib",
-            "shlwapi.lib",
-            "user32.lib",
-            "gdi32.lib",
-            "winmm.lib",
-            "psapi.lib"
-          ]
-        }
-      },
-      "msvs_configurations": {
-        "Release": {
           "msvs_settings": {
             "VCCLCompilerTool": {
-              "CompileAs": "1"
+              "ExceptionHandling": 0
+            },
+            "VCLinkerTool": {
+              "AdditionalLibraryDirectories": [
+                "<(module_root_dir)/vcpkg/installed/<(triplet)/lib"
+              ],
+              "AdditionalDependencies": [
+                "avcodec.lib",
+                "avformat.lib",
+                "avutil.lib",
+                "avfilter.lib",
+                "swscale.lib",
+                "swresample.lib",
+                "avdevice.lib",
+                "libx264.lib",
+                "x265-static.lib",
+                "vpx.lib",
+                "ws2_32.lib",
+                "secur32.lib",
+                "bcrypt.lib",
+                "strmiids.lib",
+                "ole32.lib",
+                "oleaut32.lib",
+                "vfw32.lib",
+                "mfplat.lib",
+                "mfuuid.lib",
+                "shlwapi.lib",
+                "user32.lib",
+                "gdi32.lib",
+                "winmm.lib",
+                "psapi.lib"
+              ]
+            }
+          },
+          "msvs_configurations": {
+            "Release": {
+              "msvs_settings": {
+                "VCCLCompilerTool": {
+                  "CompileAs": "1"
+                }
+              }
             }
           }
-        }
-      },
-      "conditions": [
+        }],
         ["OS!='win'", {
           "libraries": [
-            "-L./vcpkg/installed/x64-windows-static/lib",
+            "-L<(module_root_dir)/vcpkg/installed/<(triplet)/lib",
             "-lavcodec",
             "-lavformat",
             "-lavutil",
@@ -87,6 +94,45 @@
             "-lx264",
             "-lx265",
             "-lvpx"
+          ],
+          "cflags": [
+            "-std=c11",
+            "-DHAVE_LIBC_M",
+            "-mmacosx-version-min=11.0"
+          ],
+          "xcode_settings": {
+            "MACOSX_DEPLOYMENT_TARGET": "11.0",
+            "OTHER_CFLAGS": [
+              "-std=c11",
+              "-DHAVE_LIBC_M",
+              "-mmacosx-version-min=11.0"
+            ],
+            "GCC_WARN_INHIBIT_ALL_WARNINGS": "YES",
+            "OTHER_LDFLAGS": [
+              "-mmacosx-version-min=11.0",
+              "-Wl,-platform_version,macos,11.0,26.0",
+              "-framework", "OpenGL",
+              "-framework", "CoreVideo",
+              "-framework", "CoreFoundation",
+              "-framework", "Foundation",
+              "-framework", "AppKit"
+            ]
+          },
+          "defines": [
+            "HAVE_LIBC_M=1"
+          ],
+          "conditions": [
+            ["OS=='mac'", {
+              "link_settings": {
+                "libraries": [
+                  "-framework OpenGL",
+                  "-framework CoreVideo",
+                  "-framework CoreFoundation",
+                  "-framework Foundation",
+                  "-framework AppKit"
+                ]
+              }
+            }]
           ]
         }]
       ]

@@ -51,12 +51,24 @@ impl AddonPreparer {
     fn create_config_h(&self) -> Result<(), Box<dyn std::error::Error>> {
         let config_h_path = self.ffmpeg_source_dir.join("config.h");
         
+        // 检查现有文件是否匹配当前平台
         if config_h_path.exists() {
-            println!("✓ config.h already exists, skipping creation");
-            return Ok(());
+            let existing_content = fs::read_to_string(&config_h_path)?;
+            let is_windows_config = existing_content.contains("Windows build for Node.js addon");
+            let should_be_windows = cfg!(target_os = "windows");
+            
+            // 如果平台匹配，跳过重新生成
+            if (is_windows_config && should_be_windows) || (!is_windows_config && !should_be_windows) {
+                println!("✓ config.h already exists and matches current platform, skipping creation");
+                return Ok(());
+            } else {
+                println!("⚠ config.h exists but is for different platform, regenerating...");
+            }
         }
         
-        let config_h_content = r#"/* config.h - Generated for Windows build */
+        let config_h_content = if cfg!(target_os = "windows") {
+            // Windows configuration
+            r#"/* config.h - Generated for Windows build */
 #ifndef CONFIG_H
 #define CONFIG_H
 
@@ -110,10 +122,91 @@ impl AddonPreparer {
 #define FFMPEG_VERSION "N/A"
 
 #endif /* CONFIG_H */
-"#;
+"#.to_string()
+        } else {
+            // Unix (macOS/Linux) configuration
+            let arch_defines = if cfg!(target_arch = "aarch64") {
+                "#define ARCH_X86_64 0\n#define ARCH_AARCH64 1\n"
+            } else {
+                "#define ARCH_X86_64 1\n#define ARCH_AARCH64 0\n"
+            };
+            
+            format!(r#"/* config.h - Generated for Unix build (macOS/Linux) */
+#ifndef CONFIG_H
+#define CONFIG_H
+
+/* Unix specific defines */
+#define HAVE_IO_H 0
+#define HAVE_UNISTD_H 1
+#define HAVE_SYS_RESOURCE_H 1
+#define HAVE_GETPROCESSTIMES 0
+#define HAVE_GETPROCESSMEMORYINFO 0
+#define HAVE_SETCONSOLECTRLHANDLER 0
+#define HAVE_SYS_SELECT_H 1
+#define HAVE_TERMIOS_H 1
+#define HAVE_KBHIT 0
+#define HAVE_PEEKNAMEDPIPE 0
+#define HAVE_GETSTDHANDLE 0
+#define HAVE_GETRUSAGE 1
+
+/* FFmpeg components */
+#define CONFIG_AVUTIL 1
+#define CONFIG_AVCODEC 1
+#define CONFIG_AVFORMAT 1
+#define CONFIG_AVDEVICE 1
+#define CONFIG_AVFILTER 1
+#define CONFIG_SWSCALE 1
+#define CONFIG_SWRESAMPLE 1
+#define CONFIG_POSTPROC 0
+
+/* Architecture */
+#define ARCH_X86_32 0
+{}
+
+/* Threading */
+#define HAVE_PTHREADS 1
+#define HAVE_W32THREADS 0
+
+/* Endianness */
+#define HAVE_BIGENDIAN 0
+
+/* Math functions */
+#define HAVE_LRINT 1
+#define HAVE_LRINTF 1
+
+/* System math library functions (macOS/Linux have these) */
+#define HAVE_CBRT 1
+#define HAVE_CBRTF 1
+#define HAVE_COPYSIGN 1
+#define HAVE_ERF 1
+#define HAVE_HYPOT 1
+#define HAVE_RINT 1
+#define HAVE_ROUND 1
+#define HAVE_ROUNDF 1
+#define HAVE_TRUNC 1
+#define HAVE_TRUNCF 1
+#define HAVE_ATANF 1
+#define HAVE_ATAN2F 1
+#define HAVE_POWF 1
+
+/* FFmpeg data directory - empty for Node.js addon */
+#define FFMPEG_DATADIR ""
+#define AVCONV_DATADIR ""
+
+/* Build configuration */
+#define CONFIG_THIS_YEAR 2025
+#define FFMPEG_CONFIGURATION "Unix build for Node.js addon"
+#define CC_IDENT "GCC/Clang"
+#define FFMPEG_VERSION "N/A"
+
+#endif /* CONFIG_H */
+"#, arch_defines)
+        };
         
         fs::write(&config_h_path, config_h_content)?;
-        println!("✓ config.h created: {}", config_h_path.display());
+        println!("✓ config.h created for {}: {}", 
+            if cfg!(target_os = "windows") { "Windows" } else { "Unix" },
+            config_h_path.display());
         Ok(())
     }
     

@@ -4,6 +4,8 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
+use std::time::Duration;
 use flate2::read::GzDecoder;
 use tar::Archive;
 
@@ -22,11 +24,34 @@ impl VcpkgManager {
                 .join("vcpkg")
         };
         
-        let vcpkg_exe = vcpkg_root.join("vcpkg.exe");
+        // 跨平台支持：Windows 使用 vcpkg.exe，Unix 系统使用 vcpkg
+        let vcpkg_exe = if cfg!(target_os = "windows") {
+            vcpkg_root.join("vcpkg.exe")
+        } else {
+            vcpkg_root.join("vcpkg")
+        };
         
         Self {
             vcpkg_root,
             vcpkg_exe,
+        }
+    }
+    
+    /// Get the appropriate vcpkg triplet for the current platform
+    fn get_triplet(&self) -> &'static str {
+        if cfg!(target_os = "windows") {
+            "x64-windows-static"
+        } else if cfg!(target_os = "macos") {
+            if cfg!(target_arch = "aarch64") {
+                "arm64-osx"
+            } else {
+                "x64-osx"
+            }
+        } else if cfg!(target_os = "linux") {
+            "x64-linux"
+        } else {
+            // 默认使用 x64-linux，但应该根据实际情况调整
+            "x64-linux"
         }
     }
     
@@ -46,6 +71,58 @@ impl VcpkgManager {
         }
         
         Ok(())
+    }
+    
+    /// Git clone with retry mechanism and mirror support
+    fn git_clone_with_retry(&self, url: &str, max_retries: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let mut last_error = None;
+        
+        for attempt in 1..=max_retries {
+            // 重试前清理失败的克隆目录
+            if attempt > 1 && self.vcpkg_root.exists() {
+                println!("清理失败的克隆目录...");
+                let _ = fs::remove_dir_all(&self.vcpkg_root);
+            }
+            
+            if attempt > 1 {
+                let wait_seconds = (attempt * 2) as u64; // 递增等待时间：2秒、4秒、6秒...
+                println!("等待 {} 秒后重试 (尝试 {}/{})...", wait_seconds, attempt, max_retries);
+                thread::sleep(Duration::from_secs(wait_seconds));
+            }
+            
+            println!("正在克隆 vcpkg 仓库 (尝试 {}/{})...", attempt, max_retries);
+            println!("  源地址: {}", url);
+            
+            let output = Command::new("git")
+                .args(&[
+                    "clone",
+                    "--depth", "1", // 浅克隆以加快速度
+                    url,
+                    self.vcpkg_root.to_str().unwrap(),
+                ])
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::piped())
+                .output();
+            
+            match output {
+                Ok(output) => {
+                    if output.status.success() {
+                        println!("✓ 克隆成功！");
+                        return Ok(());
+                    } else {
+                        let stderr = String::from_utf8_lossy(&output.stderr);
+                        last_error = Some(format!("git clone failed: {}", stderr));
+                        eprintln!("✗ 克隆失败: {}", stderr);
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(format!("git command error: {}", e));
+                    eprintln!("✗ Git 命令执行失败: {}", e);
+                }
+            }
+        }
+        
+        Err(format!("所有 {} 次尝试均失败。最后错误: {}", max_retries, last_error.unwrap_or_else(|| "未知错误".to_string())).into())
     }
     
     /// Install vcpkg
@@ -69,35 +146,87 @@ impl VcpkgManager {
             fs::create_dir_all(parent)?;
         }
         
-        println!("Cloning vcpkg repository (this may take a few minutes)...");
-        let status = Command::new("git")
-            .args(&[
-                "clone",
-                "https://github.com/Microsoft/vcpkg.git",
-                self.vcpkg_root.to_str().unwrap(),
-            ])
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
+        // 尝试多个镜像源
+        let mirrors = vec![
+            "https://github.com/Microsoft/vcpkg.git",
+            "https://gitee.com/mirrors/vcpkg.git", // Gitee 镜像（中国用户）
+            "https://github.com.cnpmjs.org/Microsoft/vcpkg.git", // CNPM 镜像
+        ];
         
-        if !status.success() {
-            return Err("git clone vcpkg failed".into());
+        let mut clone_success = false;
+        let mut last_error = None;
+        
+        for (index, url) in mirrors.iter().enumerate() {
+            if index > 0 {
+                println!("\n尝试使用镜像源 {}...", index + 1);
+            }
+            
+            match self.git_clone_with_retry(url, 3) {
+                Ok(_) => {
+                    clone_success = true;
+                    break;
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                    if index < mirrors.len() - 1 {
+                        println!("当前源失败，将尝试下一个镜像源...");
+                        // 清理失败的克隆
+                        if self.vcpkg_root.exists() {
+                            let _ = fs::remove_dir_all(&self.vcpkg_root);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if !clone_success {
+            return Err(format!("所有镜像源均失败。最后错误: {}", 
+                last_error.map(|e| e.to_string()).unwrap_or_else(|| "未知错误".to_string())).into());
         }
         
         println!("Running bootstrap script...");
-        let bootstrap_script = self.vcpkg_root.join("bootstrap-vcpkg.bat");
-        let status = Command::new(&bootstrap_script)
-            .current_dir(&self.vcpkg_root)
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status()?;
+        
+        // 跨平台 bootstrap 脚本
+        let bootstrap_script = if cfg!(target_os = "windows") {
+            self.vcpkg_root.join("bootstrap-vcpkg.bat")
+        } else {
+            self.vcpkg_root.join("bootstrap-vcpkg.sh")
+        };
+        
+        // Unix 系统需要添加执行权限
+        if !cfg!(target_os = "windows") {
+            let chmod_status = Command::new("chmod")
+                .args(&["+x", bootstrap_script.to_str().unwrap()])
+                .status();
+            
+            if let Err(e) = chmod_status {
+                eprintln!("警告: 无法设置执行权限: {}", e);
+            }
+        }
+        
+        let status = if cfg!(target_os = "windows") {
+            Command::new("cmd")
+                .args(&["/C", bootstrap_script.to_str().unwrap()])
+                .current_dir(&self.vcpkg_root)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?
+        } else {
+            Command::new("sh")
+                .arg(bootstrap_script.to_str().unwrap())
+                .current_dir(&self.vcpkg_root)
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()?
+        };
         
         if !status.success() {
             return Err("vcpkg bootstrap failed".into());
         }
         
         if !self.vcpkg_exe.exists() {
-            return Err("vcpkg.exe was not generated, bootstrap may have failed".into());
+            let exe_name = if cfg!(target_os = "windows") { "vcpkg.exe" } else { "vcpkg" };
+            return Err(format!("{} was not generated, bootstrap may have failed", exe_name).into());
         }
         
         println!("vcpkg installation completed!");
@@ -106,6 +235,7 @@ impl VcpkgManager {
     
     /// Check if ffmpeg is installed with required features (x264, x265, vpx)
     fn is_ffmpeg_with_features(&self, features: &[&str]) -> bool {
+        let triplet = self.get_triplet();
         let output = Command::new(&self.vcpkg_exe)
             .args(&["list", "ffmpeg"])
             .output();
@@ -114,7 +244,7 @@ impl VcpkgManager {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Check if ffmpeg is installed and contains all required features
-                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                if stdout.contains("ffmpeg") && stdout.contains(triplet) {
                     return features.iter().all(|feature| stdout.contains(feature));
                 }
             }
@@ -147,6 +277,7 @@ impl VcpkgManager {
         }
         
         // Check if ffmpeg is installed but without required features
+        let triplet = self.get_triplet();
         let output = Command::new(&self.vcpkg_exe)
             .args(&["list", "ffmpeg"])
             .output();
@@ -154,13 +285,13 @@ impl VcpkgManager {
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("ffmpeg") && stdout.contains("x64-windows-static") {
+                if stdout.contains("ffmpeg") && stdout.contains(triplet) {
                     println!("⚠ ffmpeg is installed but without required codec features");
                     println!("Removing ffmpeg to reinstall with full codec support...");
                     let status = Command::new(&self.vcpkg_exe)
                         .args(&[
                             "remove",
-                            "ffmpeg:x64-windows-static",
+                            &format!("ffmpeg:{}", triplet),
                         ])
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
@@ -174,15 +305,17 @@ impl VcpkgManager {
             }
         }
         
-        println!("Installing ffmpeg[x264,x265,vpx]:x64-windows-static...");
+        let package_spec = format!("ffmpeg[x264,x265,vpx]:{}", triplet);
+        println!("Installing {}...", package_spec);
         println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
+        println!("  Platform: {}", triplet);
         println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)");
         println!("  Supported formats: x264, x265, mp4, mov, avi, webm, mkv, m4v");
         
         let status = Command::new(&self.vcpkg_exe)
             .args(&[
                 "install",
-                "ffmpeg[x264,x265,vpx]:x64-windows-static",
+                &package_spec,
             ])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
