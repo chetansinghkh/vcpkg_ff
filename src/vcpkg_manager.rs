@@ -12,6 +12,7 @@ use tar::Archive;
 pub struct VcpkgManager {
     vcpkg_root: PathBuf,
     vcpkg_exe: PathBuf,
+    triplet: String,
 }
 
 impl VcpkgManager {
@@ -24,40 +25,33 @@ impl VcpkgManager {
                 .join("vcpkg")
         };
         
-        // 跨平台支持：Windows 使用 vcpkg.exe，Unix 系统使用 vcpkg
-        let vcpkg_exe = if cfg!(target_os = "windows") {
-            vcpkg_root.join("vcpkg.exe")
+        // Detect platform and set appropriate vcpkg executable and triplet
+        let (vcpkg_exe_name, triplet) = if cfg!(target_os = "windows") {
+            ("vcpkg.exe", "x64-windows-static")
+        } else if cfg!(target_os = "macos") {
+            ("vcpkg", "x64-osx")
         } else {
-            vcpkg_root.join("vcpkg")
+            ("vcpkg", "x64-linux")
         };
+        
+        let vcpkg_exe = vcpkg_root.join(vcpkg_exe_name);
         
         Self {
             vcpkg_root,
             vcpkg_exe,
-        }
-    }
-    
-    /// Get the appropriate vcpkg triplet for the current platform
-    fn get_triplet(&self) -> &'static str {
-        if cfg!(target_os = "windows") {
-            "x64-windows-static"
-        } else if cfg!(target_os = "macos") {
-            if cfg!(target_arch = "aarch64") {
-                "arm64-osx"
-            } else {
-                "x64-osx"
-            }
-        } else if cfg!(target_os = "linux") {
-            "x64-linux"
-        } else {
-            // 默认使用 x64-linux，但应该根据实际情况调整
-            "x64-linux"
+            triplet: triplet.to_string(),
         }
     }
     
     /// Check if vcpkg is installed
     pub fn is_installed(&self) -> bool {
         self.vcpkg_exe.exists()
+    }
+    
+    /// Get triplet for current platform
+    #[allow(dead_code)]
+    pub fn get_triplet(&self) -> &str {
+        &self.triplet
     }
     
     /// Check if git is available
@@ -185,35 +179,21 @@ impl VcpkgManager {
         }
         
         println!("Running bootstrap script...");
-        
-        // 跨平台 bootstrap 脚本
         let bootstrap_script = if cfg!(target_os = "windows") {
             self.vcpkg_root.join("bootstrap-vcpkg.bat")
         } else {
             self.vcpkg_root.join("bootstrap-vcpkg.sh")
         };
         
-        // Unix 系统需要添加执行权限
-        if !cfg!(target_os = "windows") {
-            let chmod_status = Command::new("chmod")
-                .args(&["+x", bootstrap_script.to_str().unwrap()])
-                .status();
-            
-            if let Err(e) = chmod_status {
-                eprintln!("警告: 无法设置执行权限: {}", e);
-            }
-        }
-        
         let status = if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(&["/C", bootstrap_script.to_str().unwrap()])
+            Command::new(&bootstrap_script)
                 .current_dir(&self.vcpkg_root)
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
                 .status()?
         } else {
-            Command::new("sh")
-                .arg(bootstrap_script.to_str().unwrap())
+            Command::new("bash")
+                .arg(&bootstrap_script)
                 .current_dir(&self.vcpkg_root)
                 .stdout(Stdio::inherit())
                 .stderr(Stdio::inherit())
@@ -225,8 +205,7 @@ impl VcpkgManager {
         }
         
         if !self.vcpkg_exe.exists() {
-            let exe_name = if cfg!(target_os = "windows") { "vcpkg.exe" } else { "vcpkg" };
-            return Err(format!("{} was not generated, bootstrap may have failed", exe_name).into());
+            return Err("vcpkg executable was not generated, bootstrap may have failed".into());
         }
         
         println!("vcpkg installation completed!");
@@ -244,7 +223,7 @@ impl VcpkgManager {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 // Check if ffmpeg is installed and contains all required features
-                if stdout.contains("ffmpeg") && stdout.contains(triplet) {
+                if stdout.contains("ffmpeg") && stdout.contains(&self.triplet) {
                     return features.iter().all(|feature| stdout.contains(feature));
                 }
             }
@@ -285,13 +264,13 @@ impl VcpkgManager {
         if let Ok(output) = output {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                if stdout.contains("ffmpeg") && stdout.contains(triplet) {
+                if stdout.contains("ffmpeg") && stdout.contains(&self.triplet) {
                     println!("⚠ ffmpeg is installed but without required codec features");
                     println!("Removing ffmpeg to reinstall with full codec support...");
                     let status = Command::new(&self.vcpkg_exe)
                         .args(&[
                             "remove",
-                            &format!("ffmpeg:{}", triplet),
+                            &format!("ffmpeg:{}", self.triplet),
                         ])
                         .stdout(Stdio::inherit())
                         .stderr(Stdio::inherit())
@@ -305,8 +284,7 @@ impl VcpkgManager {
             }
         }
         
-        let package_spec = format!("ffmpeg[x264,x265,vpx]:{}", triplet);
-        println!("Installing {}...", package_spec);
+        println!("Installing ffmpeg[x264,x265,vpx]:{}...", self.triplet);
         println!("Note: This may take a long time (20-40 minutes), please wait patiently...");
         println!("  Platform: {}", triplet);
         println!("  Features: x264 (H.264), x265 (HEVC), vpx (VP8/VP9)");
@@ -315,7 +293,7 @@ impl VcpkgManager {
         let status = Command::new(&self.vcpkg_exe)
             .args(&[
                 "install",
-                &package_spec,
+                &format!("ffmpeg[x264,x265,vpx]:{}", self.triplet),
             ])
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
