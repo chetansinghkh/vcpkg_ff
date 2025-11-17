@@ -97,15 +97,20 @@
           ],
           "cflags": [
             "-std=c11",
-            "-DHAVE_LIBC_M"
+            "-DHAVE_LIBC_M",
+            "-mmacosx-version-min=11.0"
           ],
           "xcode_settings": {
+            "MACOSX_DEPLOYMENT_TARGET": "11.0",
             "OTHER_CFLAGS": [
               "-std=c11",
-              "-DHAVE_LIBC_M"
+              "-DHAVE_LIBC_M",
+              "-mmacosx-version-min=11.0"
             ],
             "GCC_WARN_INHIBIT_ALL_WARNINGS": "YES",
             "OTHER_LDFLAGS": [
+              "-mmacosx-version-min=11.0",
+              "-Wl,-platform_version,macos,11.0,26.0",
               "-framework", "OpenGL",
               "-framework", "CoreVideo",
               "-framework", "CoreFoundation",
